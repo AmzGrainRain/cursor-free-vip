@@ -26,6 +26,9 @@ def setup_config(translator=None):
     try:
         # get documents path
         docs_path = get_user_documents_path()
+        # debug
+        print(docs_path)
+        
         if not docs_path or not os.path.exists(docs_path):
             # if documents path not found, use current directory
             print(f"{Fore.YELLOW}{EMOJI['WARNING']} {translator.get('config.documents_path_not_found', fallback='Documents path not found, using current directory') if translator else 'Documents path not found, using current directory'}{Style.RESET_ALL}")

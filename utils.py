@@ -14,6 +14,10 @@ def get_user_documents_path():
                 documents_path, _ = winreg.QueryValueEx(key, "Personal")
                 return documents_path
         except Exception as e:
+            # debug
+            e.add_note("Unable to retrieve user directory through registry.")
+            import traceback
+            traceback.print_exc()
             # fallback
             return os.path.expanduser("~\\Documents")
     else:
