@@ -124,76 +124,62 @@ function Install-CursorFreeVIP {
         }
         
         Write-Styled "No existing installation file found, starting download..." -Color $Theme.Primary -Prefix "Download"
-        
-        # Create WebClient and add progress event
-        $webClient = New-Object System.Net.WebClient
-        $webClient.Headers.Add("User-Agent", "PowerShell Script")
 
-        # Define progress variables
-        $Global:downloadedBytes = 0
-        $Global:totalBytes = 0
-        $Global:lastProgress = 0
-        $Global:lastBytes = 0
-        $Global:lastTime = Get-Date
+        # Use HttpWebRequest for chunked download with real-time progress bar
+        $url = $asset.browser_download_url
+        $outputFile = $downloadPath
+        Write-Styled "Downloading from: $url" -Color $Theme.Info -Prefix "URL"
+        Write-Styled "Saving to: $outputFile" -Color $Theme.Info -Prefix "Path"
 
-        # Download progress event
-        $eventId = [guid]::NewGuid()
-        Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -Action {
-            $Global:downloadedBytes = $EventArgs.BytesReceived
-            $Global:totalBytes = $EventArgs.TotalBytesToReceive
-            $progress = [math]::Round(($Global:downloadedBytes / $Global:totalBytes) * 100, 1)
-            
-            # Only update display when progress changes by more than 1%
-            if ($progress -gt $Global:lastProgress + 1) {
-                $Global:lastProgress = $progress
-                $downloadedMB = [math]::Round($Global:downloadedBytes / 1MB, 2)
-                $totalMB = [math]::Round($Global:totalBytes / 1MB, 2)
-                
-                # Calculate download speed
-                $currentTime = Get-Date
-                $timeSpan = ($currentTime - $Global:lastTime).TotalSeconds
-                if ($timeSpan -gt 0) {
-                    $bytesChange = $Global:downloadedBytes - $Global:lastBytes
-                    $speed = $bytesChange / $timeSpan
-                    
-                    # Choose appropriate unit based on speed
-                    $speedDisplay = if ($speed -gt 1MB) {
-                        "$([math]::Round($speed / 1MB, 2)) MB/s"
-                    } elseif ($speed -gt 1KB) {
-                        "$([math]::Round($speed / 1KB, 2)) KB/s"
-                    } else {
-                        "$([math]::Round($speed, 2)) B/s"
+        $request = [System.Net.HttpWebRequest]::Create($url)
+        $request.UserAgent = "PowerShell Script"
+        $response = $request.GetResponse()
+        $totalLength = $response.ContentLength
+        $responseStream = $response.GetResponseStream()
+        $fileStream = [System.IO.File]::OpenWrite($outputFile)
+        $buffer = New-Object byte[] 8192
+        $bytesRead = 0
+        $totalRead = 0
+        $lastProgress = -1
+        $startTime = Get-Date
+        try {
+            do {
+                $bytesRead = $responseStream.Read($buffer, 0, $buffer.Length)
+                if ($bytesRead -gt 0) {
+                    $fileStream.Write($buffer, 0, $bytesRead)
+                    $totalRead += $bytesRead
+                    $progress = [math]::Round(($totalRead / $totalLength) * 100, 1)
+                    if ($progress -ne $lastProgress) {
+                        $elapsed = (Get-Date) - $startTime
+                        $speed = if ($elapsed.TotalSeconds -gt 0) { $totalRead / $elapsed.TotalSeconds } else { 0 }
+                        $speedDisplay = if ($speed -gt 1MB) {
+                            "{0:N2} MB/s" -f ($speed / 1MB)
+                        } elseif ($speed -gt 1KB) {
+                            "{0:N2} KB/s" -f ($speed / 1KB)
+                        } else {
+                            "{0:N2} B/s" -f $speed
+                        }
+                        $downloadedMB = [math]::Round($totalRead / 1MB, 2)
+                        $totalMB = [math]::Round($totalLength / 1MB, 2)
+                        Write-Progress -Activity "Downloading CursorFreeVIP" -Status "$downloadedMB MB / $totalMB MB ($progress%) - $speedDisplay" -PercentComplete $progress
+                        $lastProgress = $progress
                     }
-                    
-                    Write-Host "`rDownloading: $downloadedMB MB / $totalMB MB ($progress%) - $speedDisplay" -NoNewline -ForegroundColor Cyan
-                    
-                    # Update last data
-                    $Global:lastBytes = $Global:downloadedBytes
-                    $Global:lastTime = $currentTime
                 }
-            }
-        } | Out-Null
-
-        # Download completed event
-        Register-ObjectEvent -InputObject $webClient -EventName DownloadFileCompleted -Action {
-            Write-Host "`r" -NoNewline
-            Write-Styled "Download completed!" -Color $Theme.Success -Prefix "Complete"
-            Unregister-Event -SourceIdentifier $eventId
-        } | Out-Null
-
-        # Start download
-        $webClient.DownloadFileAsync([Uri]$asset.browser_download_url, $downloadPath)
-
-        # Wait for download to complete
-        while ($webClient.IsBusy) {
-            Start-Sleep -Milliseconds 100
+            } while ($bytesRead -gt 0)
+        } finally {
+            $fileStream.Close()
+            $responseStream.Close()
+            $response.Close()
         }
-        
-        Write-Styled "File location: $downloadPath" -Color $Theme.Info -Prefix "Location"
+        Write-Progress -Activity "Downloading CursorFreeVIP" -Completed
+        # Check file exists and is not zero size
+        if (!(Test-Path $outputFile) -or ((Get-Item $outputFile).Length -eq 0)) {
+            throw "Download failed or file is empty."
+        }
+        Write-Styled "Download completed!" -Color $Theme.Success -Prefix "Complete"
+        Write-Styled "File location: $outputFile" -Color $Theme.Info -Prefix "Location"
         Write-Styled "Starting program..." -Color $Theme.Primary -Prefix "Launch"
-        
-        # Run program
-        Start-Process $downloadPath
+        Start-Process $outputFile
     }
     catch {
         Write-Styled $_.Exception.Message -Color $Theme.Error -Prefix "Error"
